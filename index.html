@@ -26,20 +26,29 @@ input[type=range]{width:100%;accent-color:var(--ac)}
 button,.btn{font:inherit;background:var(--bg);color:var(--tx);border:1px solid var(--bd);border-radius:8px;padding:8px 12px;cursor:pointer}
 button.p,.btn.p{background:var(--ac);color:#fff;border-color:var(--ac)}
 #info{font-size:12px;color:var(--mu)}
+#ur{position:absolute;top:10px;left:10px;display:flex;gap:8px;z-index:2}
+#ur button{width:40px;height:40px;padding:0;display:flex;align-items:center;justify-content:center;border-radius:50%;background:var(--card);opacity:.6;cursor:pointer}
+#ur button:hover{opacity:.95}
+#ur button:disabled{opacity:.25;cursor:default}
+#ur svg.r{transform:scaleX(-1)}
 .seg button.on{background:var(--ac);color:#fff;border-color:var(--ac)}
 </style></head>
 <body>
 <header><h1>Colorateur 3D</h1>
 <label class="btn p">Ouvrir .stl / .obj<input id="file" type="file" accept=".stl,.obj" hidden></label></header>
-<div id="view"><div id="hint">Dépose un fichier .stl ou .obj ici,<br>ou utilise le bouton en haut.</div></div>
+<div id="view"><div id="ur">
+<button id="bu" title="Annuler (Ctrl+Z)" aria-label="Annuler"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14L4 9l5-5"/><path d="M4 9h10a6 6 0 010 12h-3"/></svg></button>
+<button id="br" title="Rétablir (Ctrl+Y)" aria-label="Rétablir"><svg class="r" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14L4 9l5-5"/><path d="M4 9h10a6 6 0 010 12h-3"/></svg></button></div><div id="hint">Dépose un fichier .stl ou .obj ici,<br>ou utilise le bouton en haut.</div></div>
 <div class="panel">
 <div><label class="t">Palette (choisis une couleur, puis touche une zone du modèle)</label>
 <div id="pal"></div></div>
-<div class="row seg"><button id="mz" class="on">Zone</button><button id="mb">Pinceau</button></div>
+<div class="row seg"><button id="mz" class="on">Zone</button><button id="mb">Pinceau</button><button id="ms">Doigt</button></div>
 <div id="zwrap"><label class="t">Taille de la zone : <b id="av">30</b>° <span>(180° = pièce entière)</span></label>
 <input id="ang" type="range" min="5" max="180" value="30"></div>
 <div id="bwrap" hidden><label class="t">Taille du pinceau : <b id="bv">8</b>%</label>
-<input id="bs" type="range" min="1" max="40" value="8"></div>
+<input id="bs" type="range" min="1" max="40" value="8">
+<label class="t" style="margin-top:8px"><span id="lot">Opacité du pinceau</span> : <b id="ov">100</b>%</label>
+<input id="bo" type="range" min="5" max="100" value="100"></div>
 <div class="row">
 <button id="auto" class="p">Découpe auto</button>
 <button id="all">Tout peindre</button>
@@ -66,7 +75,7 @@ new ResizeObserver(resize).observe(view); resize();
 (function loop(){requestAnimationFrame(loop);ctl.update();renderer.render(scene,cam)})();
 
 const COLORS=['#e63946','#f4a261','#f1c40f','#2a9d8f','#2e86de','#7c3aed','#e84393','#8d6e63','#ffffff','#9aa0a6','#3a3a3a','#111111'];
-let cur=COLORS[0], mesh=null, geo=null, col=null, nb=null, fn=null, cen=null, N=0, hist=[], mode='zone';
+let cur=COLORS[0], mesh=null, geo=null, col=null, nb=null, fn=null, cen=null, N=0, hist=[], redo=[], mode='zone';
 const pal=$('#pal');
 function sel(c){cur=c;[...pal.querySelectorAll('.sw')].forEach(b=>b.classList.toggle('sel',b.dataset.c===c))}
 COLORS.forEach(c=>{const b=document.createElement('button');b.className='sw';b.style.background=c;b.dataset.c=c;b.onclick=()=>sel(c);pal.appendChild(b)});
@@ -83,7 +92,7 @@ function setup(pos){
   N=pos.length/9; col=new Float32Array(N*9).fill(0.7);
   geo.setAttribute('color',new THREE.BufferAttribute(col,3));
   mesh=new THREE.Mesh(geo,new THREE.MeshStandardMaterial({vertexColors:true,roughness:0.6,metalness:0.1,side:THREE.DoubleSide}));
-  scene.add(mesh); hist=[];
+  scene.add(mesh); hist=[]; redo=[]; refreshUR();
   buildAdj(); cam.position.set(2.5,2,3.5); ctl.target.set(0,0,0);
   $('#hint').classList.add('off'); $('#info').textContent=N.toLocaleString('fr')+' triangles. Touche le modèle pour colorer.';
 }
@@ -105,14 +114,17 @@ function region(f,deg,seen){
     for(const b of nb[a]) if(!seen[b] && fn[a*3]*fn[b*3]+fn[a*3+1]*fn[b*3+1]+fn[a*3+2]*fn[b*3+2]>=th){seen[b]=1;q.push(b)}}
   return q;
 }
-function paint(faces,hex){
-  const c=new THREE.Color(hex); for(const f of faces)for(let j=0;j<3;j++){col[f*9+j*3]=c.r;col[f*9+j*3+1]=c.g;col[f*9+j*3+2]=c.b}
+function paint(faces,hex,a=1){
+  const c=new THREE.Color(hex); for(const f of faces)for(let j=0;j<3;j++){const i=f*9+j*3;col[i]+=(c.r-col[i])*a;col[i+1]+=(c.g-col[i+1])*a;col[i+2]+=(c.b-col[i+2])*a}
   geo.attributes.color.needsUpdate=true;
 }
-function snap(){hist.push(col.slice());if(hist.length>30)hist.shift()}
+function snap(){hist.push(col.slice());if(hist.length>10)hist.shift();redo=[];refreshUR()}
+function refreshUR(){$('#bu').disabled=!hist.length;$('#br').disabled=!redo.length}
+function undo(){if(!hist.length)return;redo.push(col.slice());col.set(hist.pop());geo.attributes.color.needsUpdate=true;refreshUR()}
+function redoAct(){if(!redo.length)return;hist.push(col.slice());col.set(redo.pop());geo.attributes.color.needsUpdate=true;refreshUR()}
 
 let down=null; const ray=new THREE.Raycaster(), cv=renderer.domElement;
-cv.addEventListener('pointerdown',e=>down=[e.clientX,e.clientY]);
+cv.addEventListener('pointerdown',e=>{down=(e.pointerType==='mouse'&&e.button!==0)?null:[e.clientX,e.clientY]});
 cv.addEventListener('pointerup',e=>{
   if(!down||!mesh||mode==='brush'){down=null;return} const d=Math.hypot(e.clientX-down[0],e.clientY-down[1]); down=null; if(d>6)return;
   const r=cv.getBoundingClientRect();
@@ -124,13 +136,20 @@ $('#auto').onclick=()=>{ if(!mesh)return; snap(); const seen=new Uint8Array(N), 
   for(let f=0;f<N;f++) if(!seen[f]) paint(region(f,deg,seen),COLORS[k++%COLORS.length]);
   $('#info').textContent=k+' parties détectées. Touche une zone pour la recolorer.'};
 $('#all').onclick=()=>{ if(!mesh)return; snap(); paint(Array.from({length:N},(_,i)=>i),cur)};
-$('#undo').onclick=()=>{ if(!hist.length)return; col.set(hist.pop()); geo.attributes.color.needsUpdate=true};
+$('#undo').onclick=undo; $('#bu').onclick=undo; $('#br').onclick=redoAct; refreshUR();
+document.addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&!e.altKey){const k=e.key.toLowerCase();
+  if(k==='z'&&!e.shiftKey){e.preventDefault();undo()}else if(k==='y'||(k==='z'&&e.shiftKey)){e.preventDefault();redoAct()}}});
 $('#reset').onclick=()=>{ if(!mesh)return; snap(); col.fill(0.7); geo.attributes.color.needsUpdate=true};
 
-function setMode(m){mode=m;$('#mz').classList.toggle('on',m==='zone');$('#mb').classList.toggle('on',m==='brush');
-  $('#zwrap').hidden=m!=='zone';$('#bwrap').hidden=m!=='brush';ctl.enableRotate=m==='zone';ctl.enablePan=m==='zone'}
-$('#mz').onclick=()=>setMode('zone'); $('#mb').onclick=()=>setMode('brush');
+function setMode(m){mode=m;$('#mz').classList.toggle('on',m==='zone');$('#mb').classList.toggle('on',m==='brush');$('#ms').classList.toggle('on',m==='smudge');
+  $('#zwrap').hidden=m!=='zone';$('#bwrap').hidden=m==='zone';$('#lot').textContent=m==='smudge'?'Force du doigt':'Opacité du pinceau';ctl.enableRotate=true;ctl.enablePan=true;
+  ctl.mouseButtons={LEFT:m==='zone'?THREE.MOUSE.ROTATE:-1,MIDDLE:THREE.MOUSE.ROTATE,RIGHT:THREE.MOUSE.PAN};
+  ctl.touches={ONE:m==='zone'?THREE.TOUCH.ROTATE:-1,TWO:THREE.TOUCH.DOLLY_PAN}}
+$('#mz').onclick=()=>setMode('zone'); $('#mb').onclick=()=>setMode('brush'); $('#ms').onclick=()=>setMode('smudge');
+cv.addEventListener('mousedown',e=>{if(e.button===1)e.preventDefault()});
+setMode('zone');
 $('#bs').oninput=e=>$('#bv').textContent=e.target.value;
+$('#bo').oninput=e=>$('#ov').textContent=e.target.value;
 function dab(e){
   const r=cv.getBoundingClientRect();
   ray.setFromCamera({x:((e.clientX-r.left)/r.width)*2-1,y:-((e.clientY-r.top)/r.height)*2+1},cam);
@@ -138,12 +157,23 @@ function dab(e){
   const rad=+$('#bs').value/100, p=h.point, q=[h.faceIndex], seen=new Set(q);
   for(let i=0;i<q.length;i++)for(const b of nb[q[i]]) if(!seen.has(b)){seen.add(b);
     const dx=cen[b*3]-p.x,dy=cen[b*3+1]-p.y,dz=cen[b*3+2]-p.z; if(dx*dx+dy*dy+dz*dz<=rad*rad)q.push(b)}
-  paint(q,cur);
+  if(mode==='smudge'){if(!first&&lastP&&p.distanceTo(lastP)<rad*0.3)return; lastP=p.clone(); smudge(q,first);first=false;return}
+  const fresh=q.filter(f=>!stroke.has(f)); fresh.forEach(f=>stroke.add(f)); paint(fresh,cur,+$('#bo').value/100);
 }
-let bru=false; const ptrs=new Set();
-cv.addEventListener('pointerdown',e=>{ptrs.add(e.pointerId); if(mode!=='brush'||!mesh)return;
-  if(ptrs.size>1){bru=false;return} snap(); bru=true; dab(e)});
-cv.addEventListener('pointermove',e=>{if(bru&&mode==='brush'&&ptrs.size===1)dab(e)});
+let first=false, carried=null, lastP=null;
+function smudge(q,first){
+  const orig=hist[hist.length-1]||col; let r=0,g=0,b=0; for(const f of q){r+=orig[f*9];g+=orig[f*9+1];b+=orig[f*9+2]}
+  const n=q.length; r/=n;g/=n;b/=n;
+  if(first||!carried){carried=[r,g,b];return}
+  const a=+$('#bo').value/100*0.5;
+  for(const f of q)for(let j=0;j<3;j++){const i=f*9+j*3;for(let k=0;k<3;k++)col[i+k]+=(carried[k]-col[i+k])*a}
+  geo.attributes.color.needsUpdate=true;
+  carried=[carried[0]+(r-carried[0])*0.15,carried[1]+(g-carried[1])*0.15,carried[2]+(b-carried[2])*0.15];
+}
+let bru=false; const ptrs=new Set(), stroke=new Set();
+cv.addEventListener('pointerdown',e=>{ptrs.add(e.pointerId); if(e.pointerType==='mouse'&&e.button!==0){bru=false;return} if(mode==='zone'||!mesh)return;
+  if(ptrs.size>1){bru=false;return} snap(); stroke.clear(); first=true; bru=true; dab(e)});
+cv.addEventListener('pointermove',e=>{if(bru&&mode!=='zone'&&ptrs.size===1)dab(e)});
 ['pointerup','pointercancel','pointerleave'].forEach(t=>cv.addEventListener(t,e=>{ptrs.delete(e.pointerId);bru=false}));
 async function loadFile(f){
   if(!f)return; const n=f.name.toLowerCase();

@@ -35,7 +35,7 @@ button.p,.btn.p{background:var(--ac);color:#fff;border-color:var(--ac)}
 </style></head>
 <body>
 <header><h1>Colorateur 3D</h1>
-<label class="btn p">Ouvrir .stl / .obj<input id="file" type="file" accept=".stl,.obj" hidden></label></header>
+<label class="btn p">Ouvrir un fichier<input id="file" type="file" accept=".stl,.obj,.c3d" hidden></label></header>
 <div id="view"><div id="ur">
 <button id="bu" title="Annuler (Ctrl+Z)" aria-label="Annuler"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14L4 9l5-5"/><path d="M4 9h10a6 6 0 010 12h-3"/></svg></button>
 <button id="br" title="Rétablir (Ctrl+Y)" aria-label="Rétablir"><svg class="r" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14L4 9l5-5"/><path d="M4 9h10a6 6 0 010 12h-3"/></svg></button></div><div id="hint">Dépose un fichier .stl ou .obj ici,<br>ou utilise le bouton en haut.</div></div>
@@ -54,12 +54,14 @@ button.p,.btn.p{background:var(--ac);color:#fff;border-color:var(--ac)}
 <button id="all">Tout peindre</button>
 <button id="undo">Annuler</button>
 <button id="reset">Réinitialiser</button></div>
+<div><label class="t">Enregistrer</label><div class="row"><button id="sv">Projet (.c3d)</button><button id="xp">PLY</button><button id="xg">GLB</button><button id="xi">PNG</button></div></div>
 <div id="info">Glisse pour tourner, pince pour zoomer, touche pour colorer.</div>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/STLLoader.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/OBJLoader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/exporters/GLTFExporter.js"></script>
 <script>
 const $=s=>document.querySelector(s), view=$('#view');
 const renderer=new THREE.WebGLRenderer({antialias:true,alpha:true});
@@ -87,7 +89,7 @@ function setup(pos){
   if(mesh){scene.remove(mesh);mesh.geometry.dispose()}
   geo=new THREE.BufferGeometry(); geo.setAttribute('position',new THREE.BufferAttribute(pos,3));
   geo.computeBoundingBox(); const bb=geo.boundingBox, c=bb.getCenter(new THREE.Vector3()), s=bb.getSize(new THREE.Vector3());
-  const k=2/Math.max(s.x,s.y,s.z,1e-9); geo.translate(-c.x,-c.y,-c.z); geo.scale(k,k,k);
+  const k=2/Math.max(s.x,s.y,s.z,1e-9); origScale=1/k; geo.translate(-c.x,-c.y,-c.z); geo.scale(k,k,k);
   geo.computeVertexNormals();
   N=pos.length/9; col=new Float32Array(N*9).fill(0.7);
   geo.setAttribute('color',new THREE.BufferAttribute(col,3));
@@ -175,18 +177,44 @@ cv.addEventListener('pointerdown',e=>{ptrs.add(e.pointerId); if(e.pointerType===
   if(ptrs.size>1){bru=false;return} snap(); stroke.clear(); first=true; bru=true; dab(e)});
 cv.addEventListener('pointermove',e=>{if(bru&&mode!=='zone'&&ptrs.size===1)dab(e)});
 ['pointerup','pointercancel','pointerleave'].forEach(t=>cv.addEventListener(t,e=>{ptrs.delete(e.pointerId);bru=false}));
+let modelName='modele', origScale=1;
+function b64(arr){const u=new Uint8Array(arr.buffer,arr.byteOffset,arr.byteLength);let s='';for(let i=0;i<u.length;i+=32768)s+=String.fromCharCode.apply(null,u.subarray(i,i+32768));return btoa(s)}
+function unb64(s){const t=atob(s),u=new Uint8Array(t.length);for(let i=0;i<t.length;i++)u[i]=t.charCodeAt(i);return u}
+function saveBlob(blob,fn){const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=fn;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),3000)}
+function need(){if(!mesh){$('#info').textContent="Charge d'abord un modèle.";return false}return true}
+$('#sv').onclick=()=>{if(!need())return;
+  const d={v:1,name:modelName,scale:origScale,pos:b64(geo.attributes.position.array),col:b64(Uint8Array.from(col,v=>Math.round(v*255)))};
+  saveBlob(new Blob([JSON.stringify(d)],{type:'application/json'}),modelName+'.c3d'); $('#info').textContent='Projet enregistré : '+modelName+'.c3d'};
+$('#xp').onclick=()=>{if(!need())return;
+  const p=geo.attributes.position.array, V=N*3, s=origScale;
+  const head='ply\nformat binary_little_endian 1.0\nelement vertex '+V+'\nproperty float x\nproperty float y\nproperty float z\nproperty uchar red\nproperty uchar green\nproperty uchar blue\nelement face '+N+'\nproperty list uchar int vertex_indices\nend_header\n';
+  const h=new TextEncoder().encode(head), buf=new ArrayBuffer(h.length+V*15+N*13), dv=new DataView(buf); new Uint8Array(buf).set(h); let o=h.length;
+  for(let i=0;i<V;i++){dv.setFloat32(o,p[i*3]*s,true);dv.setFloat32(o+4,p[i*3+1]*s,true);dv.setFloat32(o+8,p[i*3+2]*s,true);
+    dv.setUint8(o+12,Math.round(col[i*3]*255));dv.setUint8(o+13,Math.round(col[i*3+1]*255));dv.setUint8(o+14,Math.round(col[i*3+2]*255));o+=15}
+  for(let f=0;f<N;f++){dv.setUint8(o,3);dv.setInt32(o+1,f*3,true);dv.setInt32(o+5,f*3+1,true);dv.setInt32(o+9,f*3+2,true);o+=13}
+  saveBlob(new Blob([buf],{type:'application/octet-stream'}),modelName+'.ply'); $('#info').textContent='Export PLY terminé.'};
+$('#xg').onclick=()=>{if(!need())return;
+  if(!THREE.GLTFExporter){$('#info').textContent='Export GLB indisponible (script non chargé).';return}
+  const m=mesh.clone(); m.scale.setScalar(origScale);
+  new THREE.GLTFExporter().parse(m,r=>{saveBlob(new Blob([r],{type:'model/gltf-binary'}),modelName+'.glb'); $('#info').textContent='Export GLB terminé.'},{binary:true})};
+$('#xi').onclick=()=>{if(!need())return; renderer.render(scene,cam); cv.toBlob(b=>{saveBlob(b,modelName+'.png'); $('#info').textContent='Capture PNG enregistrée.'})};
 async function loadFile(f){
   if(!f)return; const n=f.name.toLowerCase();
   try{
-    const buf=await f.arrayBuffer();
-    if(n.endsWith('.stl')){ const g=new THREE.STLLoader().parse(buf); setup(Float32Array.from(g.attributes.position.array)); }
+    const buf=await f.arrayBuffer(); modelName=f.name.replace(/\.[^.]+$/,'');
+    if(n.endsWith('.c3d')){
+      const d=JSON.parse(new TextDecoder().decode(buf)); setup(new Float32Array(unb64(d.pos).buffer));
+      const u=unb64(d.col); if(u.length===col.length)for(let i=0;i<u.length;i++)col[i]=u[i]/255;
+      geo.attributes.color.needsUpdate=true; if(d.scale)origScale=d.scale; if(d.name)modelName=d.name;
+      $('#info').textContent='Projet chargé : '+N.toLocaleString('fr')+' triangles.';
+    } else if(n.endsWith('.stl')){ const g=new THREE.STLLoader().parse(buf); setup(Float32Array.from(g.attributes.position.array)); }
     else if(n.endsWith('.obj')){
       const obj=new THREE.OBJLoader().parse(new TextDecoder().decode(buf)), parts=[]; obj.updateMatrixWorld(true);
       obj.traverse(m=>{if(m.isMesh){let g=m.geometry.clone();if(g.index)g=g.toNonIndexed();g.applyMatrix4(m.matrixWorld);parts.push(g.attributes.position.array)}});
       const len=parts.reduce((s,a)=>s+a.length,0), pos=new Float32Array(len); let o=0; parts.forEach(a=>{pos.set(a,o);o+=a.length});
       if(!len)throw 0; setup(pos);
     } else throw 0;
-  }catch(err){$('#info').textContent='Fichier illisible. Formats acceptés : .stl ou .obj.'}
+  }catch(err){$('#info').textContent='Fichier illisible. Formats acceptés : .stl, .obj ou .c3d.'}
 }
 $('#file').onchange=e=>loadFile(e.target.files[0]);
 ['dragover','dragenter'].forEach(t=>view.addEventListener(t,e=>{e.preventDefault();view.classList.add('drag')}));
